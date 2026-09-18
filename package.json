@@ -42,6 +42,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@neon/config": "^1.7.2",
+    "@neon/env": "^1.4.3",
     "@tailwindcss/typography": "^0.5.19",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
