@@ -4,7 +4,21 @@ import { FlipWords } from "@/components/ui/FlipWords";
 import { TiltCard } from "@/components/ui/TiltCard";
 import { MagneticButton } from "@/components/ui/MagneticButton";
 
-export function Hero() {
+export function Hero({
+  yearsOfExperience,
+  concurrentProjects,
+  companiesLed,
+  linkedinConnections,
+  locationFlag,
+  locationShort,
+}: {
+  yearsOfExperience: number;
+  concurrentProjects: number;
+  companiesLed: number;
+  linkedinConnections: number;
+  locationFlag: string;
+  locationShort: string;
+}) {
   return (
     <section id="hero" className="min-h-screen pt-[88px] pb-[70px] px-[5%] grid md2:grid-cols-[1.1fr_0.9fr] gap-12 items-center bg-white relative overflow-hidden after:content-[''] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-px after:bg-border">
       <ParticleCanvas />
@@ -29,17 +43,17 @@ export function Hero() {
         </h1>
 
         <p className="text-base text-text2 leading-[1.82] max-w-[500px] mb-10">
-          With <strong className="text-black font-semibold">11+ years</strong> across eCommerce, CRM, and enterprise automation — my real edge is the teams I build and the clients who trust me to deliver.
+          With <strong className="text-black font-semibold">{yearsOfExperience}+ years</strong> across eCommerce, CRM, and enterprise automation — my real edge is the teams I build and the clients who trust me to deliver.
         </p>
 
         <div className="flex gap-[0.875rem] flex-wrap mb-11">
           <MagneticButton>
-            <a href="#contact" className="bg-black text-white px-8 py-[0.85rem] rounded-md font-bold text-[0.9rem] no-underline inline-flex items-center gap-2 cursor-none transition-colors duration-[220ms] hover:bg-accent">
+            <a href="#contact" data-contact-type="hiring" className="bg-black text-white px-8 py-[0.85rem] rounded-md font-bold text-[0.9rem] no-underline inline-flex items-center gap-2 cursor-none transition-all duration-[220ms] hover:bg-black-3 hover:shadow-[3px_3px_0_#444] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2">
               Hire Me →
             </a>
           </MagneticButton>
           <MagneticButton>
-            <a href="#contact" className="bg-white text-black px-7 py-[0.85rem] rounded-md font-semibold text-[0.9rem] no-underline border border-border inline-flex items-center gap-2 cursor-none transition-all duration-[220ms] hover:border-black">
+            <a href="#contact" data-contact-type="junior" className="bg-white text-black px-7 py-[0.85rem] rounded-md font-semibold text-[0.9rem] no-underline border border-border inline-flex items-center gap-2 cursor-none transition-all duration-[220ms] hover:border-black">
               🎓 Junior Dev? Let&apos;s Talk
             </a>
           </MagneticButton>
@@ -51,7 +65,7 @@ export function Hero() {
               <div key={i} className="w-7 h-7 rounded-full bg-gray border-2 border-white flex items-center justify-center text-[0.62rem] font-extrabold text-black" style={{ marginLeft: i === 0 ? 0 : -6 }}>{l}</div>
             ))}
           </div>
-          <p className="text-[0.75rem] text-muted">Worked with <strong className="text-black font-bold">4+ companies</strong> · 500+ LinkedIn connections</p>
+          <p className="text-[0.75rem] text-muted">Worked with <strong className="text-black font-bold">{companiesLed}+ companies</strong> · {linkedinConnections}+ LinkedIn connections</p>
         </div>
       </div>
 
@@ -59,7 +73,7 @@ export function Hero() {
       <div className="hidden md2:block relative z-10">
         <div className="grid grid-cols-2 gap-3">
           <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
-            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">11+</div>
+            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">{yearsOfExperience}+</div>
             <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.8px]">Years Exp.</div>
           </TiltCard>
           <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
@@ -81,12 +95,12 @@ export function Hero() {
             </div>
           </div>
           <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
-            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">7</div>
+            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">{concurrentProjects}</div>
             <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.8px]">Projects at once</div>
           </TiltCard>
           <TiltCard className="bg-[#FFFBEB] border border-[#FDE68A] rounded-xl p-5 cursor-none hover:shadow-[4px_4px_0_#D97706] transition-all">
-            <div className="text-[1.4rem] mb-1">🇧🇩</div>
-            <div className="text-[0.78rem] font-bold">Dhaka, BD</div>
+            <div className="text-[1.4rem] mb-1">{locationFlag}</div>
+            <div className="text-[0.78rem] font-bold break-words">{locationShort}</div>
             <div className="text-[0.67rem] font-semibold text-muted uppercase tracking-[0.8px] mt-0.5">Remote-ready</div>
           </TiltCard>
         </div>

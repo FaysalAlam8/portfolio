@@ -1,3 +1,6 @@
+import type { ContactType } from "@/lib/contactType";
+import { telHref, type ContactDetails } from "@/lib/settings";
+
 export interface NavLink {
   label: string;
   href: string;
@@ -9,6 +12,8 @@ export interface CommandItem {
   href: string;
   shortcut: string;
   external?: boolean;
+  /** Preselects this contact-form track when the item jumps to #contact. */
+  contactType?: ContactType;
 }
 
 export interface CommandGroup {
@@ -25,7 +30,9 @@ export const navLinks: NavLink[] = [
   { label: "Contact", href: "#contact" },
 ];
 
-export const commandGroups: CommandGroup[] = [
+// The Quick Actions hrefs come from the contact settings, so the groups are
+// built from them rather than kept as a static array.
+export const buildCommandGroups = (contact: ContactDetails): CommandGroup[] => [
   {
     label: "Navigate",
     items: [
@@ -41,10 +48,10 @@ export const commandGroups: CommandGroup[] = [
   {
     label: "Quick Actions",
     items: [
-      { emoji: "✉️", label: "Send Email", href: "mailto:emdad.ullah@reddotdigitalit.com", shortcut: "⌘ E" },
-      { emoji: "💼", label: "Open LinkedIn", href: "https://www.linkedin.com/in/emdad-ullah-41956756/", shortcut: "⌘ L", external: true },
-      { emoji: "📞", label: "WhatsApp / Call", href: "tel:+8801833184053", shortcut: "⌘ P" },
-      { emoji: "🎓", label: "Book Mentorship Chat", href: "#contact", shortcut: "⌘ M" },
+      { emoji: "✉️", label: "Send Email", href: `mailto:${contact.email}`, shortcut: "⌘ E" },
+      { emoji: "💼", label: "Open LinkedIn", href: contact.linkedinUrl, shortcut: "⌘ L", external: true },
+      { emoji: "📞", label: "WhatsApp / Call", href: telHref(contact.phone), shortcut: "⌘ P" },
+      { emoji: "🎓", label: "Book Mentorship Chat", href: "#contact", shortcut: "⌘ M", contactType: "junior" },
     ],
   },
 ];

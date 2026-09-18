@@ -1,0 +1,548 @@
+# TASKS
+
+Working task list. Each task records the root cause found in the code, the planned fix, and the files involved. Check items off as they land. Verify everything with `npm run build` (type-check) plus a manual pass at the widths listed in [CLAUDE.md](CLAUDE.md#responsive--scaling-non-negotiable) — there is no test suite.
+
+---
+
+## 1. Wire up Mailpit and verify the contact form actually sends
+
+**Status:** done (2026-09-12)
+
+**Root cause / context.** The contact form persists fine but mail delivery cannot be tested locally at all right now. [src/lib/resend.ts](src/lib/resend.ts) uses the Resend **HTTP API**, and [src/app/api/contact/route.ts:23](src/app/api/contact/route.ts#L23) skips sending entirely unless `RESEND_API_KEY` is set to a real key. Mailpit is an **SMTP** server (`:1025` SMTP, `:8025` web UI) — the Resend SDK cannot talk to it, so there is no code path that reaches Mailpit today.
+
+**Plan.**
+- [x] Add `nodemailer` (+ `@types/nodemailer`) and a transport in [src/lib/mailer.ts](src/lib/mailer.ts) that picks the driver from env: **SMTP when `SMTP_HOST` is set** (local/Mailpit), Resend otherwise (production). Keep `buildContactEmailHtml` as the single source of the email body — both drivers use it.
+- [x] Refactor [route.ts](src/app/api/contact/route.ts) to call one `sendContactEmail()` helper instead of inlining the Resend call and the placeholder-key check. Mail failure must **not** fail the request — `sendContactEmail()` never throws, returns `{ sent, driver, reason }`, and the route `console.warn`s and still answers `{ success: true }`.
+- [x] Add to `.env.example` (and document in CLAUDE.md § Environment): `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, optional `SMTP_USER` / `SMTP_PASS`, `MAIL_FROM`, `MAIL_TO` (shared by both drivers; `RESEND_FROM_EMAIL` / `RESEND_TO_EMAIL` kept as fallbacks), plus the container-vs-host hostname note.
+- [x] **Decision:** Mailpit is a service in [docker-dev/docker-compose.yml](docker-dev/docker-compose.yml) so a fresh clone works with nothing else installed; the app container gets `SMTP_HOST=mailpit`. The author's machine already runs `mailpit.exe` on 1025/8025 (shared with another project), which is what host-side `npm run dev` (`SMTP_HOST=localhost`) hits — the bundled service's published ports can be shifted with `MAILPIT_SMTP_PORT` / `MAILPIT_UI_PORT`, or the service skipped, to avoid the clash.
+- [x] **Tested end to end** against the running Mailpit (Docker/WSL are not installed on this machine, so the host binary + host Postgres on 5433 were used): `POST /api/contact` for both tracks → 200 `{"success":true}`, both `ContactSubmission` rows read back from the DB, both messages visible in Mailpit with the right `Subject: [Portfolio] …`, `Reply-To: <sender>`, and 💼 / 🎓 type label. Failure paths checked too: dead SMTP port → `{sent:false,…,"ECONNREFUSED"}` and no throw; no transport configured → `driver: "none"`, no throw.
+
+**Also fixed while in here (pre-existing, was blocking `npm run build`):**
+- The Resend client was constructed at module scope, but `new Resend(undefined)` **throws** — any deployment without `RESEND_API_KEY` would have 500'd the whole contact route at import time, guard or no guard. It is now lazy (`getResend()` in [src/lib/resend.ts](src/lib/resend.ts)).
+- `npm run build` already failed on `main`'s lockfile: `@prisma/adapter-pg` nests `@types/pg` 8.11 whose `ClientBase` is incompatible with the 8.20 types `pg` resolves, so `new PrismaPg(pool)` failed to type-check in both [prisma/seed.ts](prisma/seed.ts) and [src/lib/prisma.ts](src/lib/prisma.ts). Deduped with an `overrides` entry in [package.json](package.json); the build is green again.
+
+---
+
+## 2. "Hire Me" / "Junior Dev" buttons must preselect the matching tab
+
+**Status:** done (2026-09-14)
+
+**Root cause.** [Contact.tsx:7](src/components/sections/Contact.tsx#L7) holds `type` in local state hardcoded to `"hiring"`, and every CTA is a plain `href="#contact"` anchor. Scrolling to the section is all that happens — nothing tells the form which track the visitor came from. Affected CTAs:
+
+| Button | File | Should select |
+| --- | --- | --- |
+| `Hire Me →` (navbar) | [Nav.tsx:42](src/components/layout/Nav.tsx#L42) | hiring |
+| `Hire Me →` (hero) | [Hero.tsx:37](src/components/sections/Hero.tsx#L37) | hiring |
+| `🎓 Junior Dev? Let's Talk` (hero) | [Hero.tsx:42](src/components/sections/Hero.tsx#L42) | junior |
+| `Let's Discuss a Role →` | [ForYou.tsx:27](src/components/sections/ForYou.tsx#L27) | hiring |
+| `Book a Free Chat →` | [ForYou.tsx:45](src/components/sections/ForYou.tsx#L45) | junior |
+| `🎓 Book Mentorship Chat` (⌘K palette) | [nav.ts:47](src/data/nav.ts#L47) | junior |
+
+**Plan.**
+- [x] Mark each CTA with `data-contact-type="hiring" | "junior"` and have `Contact` register **one** document-level click listener for `a[data-contact-type]` that sets the state. This keeps [ForYou.tsx](src/components/sections/ForYou.tsx) a server component and avoids prop-drilling through the whole page — consistent with the server/client split rule in CLAUDE.md.
+- [x] Also honour a `?type=junior` query param on load so cross-page links (e.g. `/#contact` from a blog post) can target a track. Read from `window.location` in an effect rather than `useSearchParams`, so `/` stays statically prerendered without a Suspense boundary.
+- [x] Add the `type` to the ⌘K palette items so "Book Mentorship Chat" lands on the junior tab. `CommandItem.contactType` → `requestContactType()` dispatches a window event, since the palette scrolls programmatically instead of clicking a link.
+- [x] Give the selected tab `aria-pressed` / proper button semantics while in there, and make sure focus moves somewhere sensible after the jump (accessibility, not just visual selection). The toggle is a labelled `role="group"` with `aria-pressed` and a `focus-visible` ring. After a CTA jump, focus lands on the chosen tab (`preventScroll`, and deliberately not an input, which would pop the mobile keyboard).
+- [x] The track list lives in one zod-free module, [src/lib/contactType.ts](src/lib/contactType.ts), and `contactSchema` uses `z.enum(CONTACT_TYPES)` from it.
+- [x] **Tested** in headless Chrome at 1280px and 390px (touch). Each tagged CTA, clicked while the form is on the *opposite* track, selects the right tab, focuses it, and lands on `#contact`. The palette item selects junior, `?type=junior` preselects on load, `?type=bogus` falls back to hiring, and an untagged `#contact` link (footer) leaves the track alone. No page errors.
+
+**Gotcha hit while verifying:** running `npm run build` while `npm run dev` is up overwrites the shared `.next` with a production build. The dev server then 404s its CSS/JS and the homepage renders unstyled. Stop dev, `rm -rf .next`, restart.
+
+---
+
+## 3. Replace the off-theme blue button hovers
+
+**Status:** done (2026-09-14)
+
+**Root cause.** The palette is monochrome (black / gray / white) with `accent: #2563EB` intended as a *typographic* accent — it is used correctly on the hero `FlipWords` ([Hero.tsx:26](src/components/sections/Hero.tsx#L26)) and blog prose links. But `hover:bg-accent` was also applied to solid buttons, so they flip to saturated blue on hover, which reads as a different design system:
+
+- [Nav.tsx:42](src/components/layout/Nav.tsx#L42) — `Hire Me →`
+- [Hero.tsx:37](src/components/sections/Hero.tsx#L37) — `Hire Me →`
+- [Contact.tsx:106](src/components/sections/Contact.tsx#L106) — `Send Message →`
+- [blog/[slug]/page.tsx:39](src/app/blog/[slug]/page.tsx#L39) — `Get in touch →`
+
+**Plan.**
+- [x] Black buttons: hover stays monochrome — `hover:bg-black-3` plus an offset hard shadow, `hover:shadow-[3px_3px_0_#444]` (`2px` on the small nav button). `#444` rather than `#0A0A0A` because a black shadow under a black button just reads as a bigger button. No translate lift: all but the blog CTA sit inside `MagneticButton`, which already moves them (task 4). The submit button drops the shadow when `disabled`.
+- [x] Keep `accent` for text/links only. Recorded in CLAUDE.md § Styling, along with the hover recipe.
+- [x] Swept for other `hover:bg-accent` / hardcoded `#2563EB`. Found one more: [ForYou.tsx:27](src/components/sections/ForYou.tsx#L27) `Let's Discuss a Role →` (white button on the black card) went blue with white text on hover — now `hover:bg-gray` + the same `#444` offset shadow. The only remaining `#2563EB` is the cursor hover colour in [CustomCursor.tsx:58](src/components/layout/CustomCursor.tsx#L58), left for task 5, which reworks that component.
+- [x] Every touched button also got a `focus-visible` ring (`ring-black ring-offset-2`; `ring-white ring-offset-black` on the dark card), since hover-only feedback fails keyboard users.
+
+---
+
+## 4. Magnetic buttons travel too far and escape their container
+
+**Status:** done (2026-09-14)
+
+**Root cause.** [MagneticButton.tsx:18-23](src/components/ui/MagneticButton.tsx#L18-L23) computes the offset from `getBoundingClientRect()` of the element **that is itself already translated**, so the measured centre chases the cursor and the offset compounds instead of converging. The displacement is also unbounded — `strength * (distance from centre)` with no cap — so a fast flick near the edge throws the button well outside its parent (visible on the hero CTA row and the nav).
+
+**Plan.**
+- [x] Measure against the untranslated rect. It subtracts the **spring** values (`springX`/`springY`), not the raw `x`/`y` targets, because the spring is what is actually rendered into the transform.
+- [x] **Clamp** each axis to a new `max` prop (default `6`px), and lower the default `strength` from `0.22` to `0.15`.
+- [x] Reset on `pointerleave`, `pointercancel` and `mouseleave`. Tracking moved to `onPointerMove`, which ignores `pointerType === "touch"`.
+- [x] Disabled for touch/coarse pointers (`(hover: hover) and (pointer: fine)` via a new [useMediaQuery](src/hooks/useMediaQuery.ts) hook, `false` during SSR and hydration) and under framer's `useReducedMotion()`. If either flips while the button is displaced, it snaps back to 0. `useMediaQuery` is there for task 6 to reuse, since [TiltCard](src/components/ui/TiltCard.tsx) has the same unguarded mouse handling.
+- [x] Clipping: at max throw, none of the 7 instances (nav ⌘K + Hire Me, both hero CTAs, both ForYou CTAs, contact submit) crosses its nearest `overflow-hidden` ancestor. The tightest is the ForYou cards (40px padding).
+- [x] **Tested** in headless Chrome against the dev server. At 1280px, for every instance: a sweep to the far corner caps at 6px (the underdamped spring briefly overshoots to ~6.01), jiggling in place converges to the same value (`1.5px` for an 11px offset, no drift), and a one-step jump off the button snaps back to 0. With `reducedMotion: "reduce"` the button doesn't move. At 390px with touch emulation, the fine-pointer query is false and a tap leaves the offset at 0. No page errors. Type-checked with `tsc --noEmit`, not `npm run build`, because dev was running (see the task 2 gotcha).
+
+---
+
+## 5. Custom cursor is invisible on dark sections
+
+**Status:** done (2026-09-14)
+
+**Root cause.** [CustomCursor.tsx:58](src/components/layout/CustomCursor.tsx#L58) paints the dot `#0A0A0A` with a `rgba(10,10,10,0.25)` ring — the same black as the dark surfaces. So the cursor disappears over every dark block: the **"For Companies & Teams"** card in [ForYou.tsx:14](src/components/sections/ForYou.tsx#L14), the hero "Currently Available" bento tile, the ticker strip, hovered contact rows, and the footer. The hover state also flips to blue `#2563EB`, the same off-theme blue as task 3.
+
+**Plan.**
+- [x] Make the cursor contrast-aware rather than fixed-colour: the dot is `bg-white mix-blend-difference`, and the ring is a white border (40% at rest, 70% on hover) with the same blend. Blending works because both elements are direct children of `<body>`, so they blend against the root stacking context. The nav's `backdrop-blur`, the particle canvas, `MagneticButton` transforms and the ⌘K overlay are all painted *beneath* them in that context, so none of them isolate. That constraint is noted in the component.
+- [x] **Blind spot found: mid-gray.** Difference against 50% gray leaves it at 50% gray (127 → 128), and the ⌘K scrim (`rgba(0,0,0,0.5)` over white) is exactly that, so the cursor vanished there. The scrim now carries `data-cursor-surface="scrim"`. While the pointer is on that element itself (not the panel stacked on it), the cursor drops the blend and renders plain white with a 70% ring. Scrims are always ≤50% luminance, so white is always visible. Other pages can reuse the attribute for any future overlay.
+- [x] Drop the blue hover colour as part of the same change (task 3 consistency). No `#2563EB` / `rgba(37,99,235,…)` is left in `src/` outside the Tailwind `accent` token.
+- [x] Re-check the black ForYou card specifically, including its white `Let's Discuss a Role →` button, at the hover-grown ring size. With the pointer just inside the button's left edge, the 48px ring straddles both: it reads light over the card and dark over the button.
+- [x] Confirm the cursor is still fully suppressed below 960px, where `body { cursor: auto }` takes over ([globals.css:20](src/app/globals.css#L20)).
+- [x] Also: the cursor stays at `opacity: 0` until the first `mousemove` (it used to park a dot at the top-left corner on load), and hides again when the pointer leaves the window.
+- [x] **Tested** in headless Chrome at 1280px against the dev server. Each surface was screenshotted with the cursor shown and with it hidden, comparing luminance at the dot centre and on the ring stroke (0–255):
+
+  | Surface | Dot | Ring |
+  | --- | --- | --- |
+  | Hero white background | 255 → 0 | 255 → 154 |
+  | Hero "Currently Available" tile, ticker, ForYou card, footer | 10 → 245 | 10 → 103 |
+  | Hovered contact row (black) | 10 → 245 | 10 → 174 |
+  | ForYou white button, hover ring straddling the card | 244 → 11 (button) | 10 → 174 (card side) |
+  | Nav (`backdrop-blur`) over a link | 181 → 74 | 255 → 77 |
+  | ⌘K scrim, before the fix | 127 → 128 ✗ | 127 → 127 ✗ |
+  | ⌘K scrim, after | 127 → 255 | 127 → 216 |
+  | ⌘K white panel | 255 → 0 | 255 → 154 |
+
+  At 959px and 390px both cursor elements are `display: none` and `body` is `cursor: auto`. At 960px they are `block` and `cursor: none`. No page errors. Type-checked with `tsc --noEmit` (dev was running).
+
+  Known limit: when the pointer sits on the panel's edge, the part of the ring that hangs over the scrim is still blended and faint there. The dot, which is on the panel, stays fully visible.
+
+---
+
+## 6. Full responsiveness pass
+
+**Status:** not started
+
+Audit and fix against the rules in [CLAUDE.md § Responsive & scaling](CLAUDE.md#responsive--scaling-non-negotiable). Known issues found while reading the code:
+
+- [ ] **No mobile navigation.** [Nav.tsx:20](src/components/layout/Nav.tsx#L20) hides the section links *and* the ⌘K button below 960px with nothing in their place — under 960px there is no way to navigate the one-page scroll. Needs a real menu (or an equivalent affordance).
+- [ ] **Hero bento column is dropped.** [Hero.tsx:59](src/components/sections/Hero.tsx#L59) is `hidden md2:block`, so mobile loses the 11+ years / 1M+ users / availability content entirely. Give it a mobile layout instead of hiding it.
+- [ ] **Single breakpoint jump.** Every grid goes 1 column → N at `md2` only, leaving 640–959px sparse: [Stats.tsx:14](src/components/sections/Stats.tsx#L14) (1→4), [WhatIDo.tsx:12](src/components/sections/WhatIDo.tsx#L12) (1→3), [BlogPreview.tsx:20](src/components/sections/BlogPreview.tsx#L20) (1→3), [Projects.tsx:15](src/components/sections/Projects.tsx#L15) (1→2). Add `sm:`/`md:` steps.
+- [ ] **No max-width container.** Sections use `px-[5%]` alone, so content stretches to the full 2560px on ultrawide. Add a max-width wrapper and a minimum side gutter (`px-5 md2:px-[5%]`).
+- [ ] **`min-h-screen` on the hero** ([Hero.tsx:9](src/components/sections/Hero.tsx#L9)) overflows behind mobile browser chrome → `min-h-[100svh]`.
+- [ ] **Fixed px letter-spacing against fluid type**: `tracking-[-3px]` on the hero `h1` and `tracking-[-1.5px]` / `-2px` on section headings are crushing at the small end of their `clamp()`. Convert to `em`.
+- [ ] **Contact form cramps.** `grid-cols-2` for Name/Email ([Contact.tsx:84](src/components/sections/Contact.tsx#L84)) is too tight at 360px; the two type-toggle buttons need to wrap and hit the 44px touch target; and the stacked `gap-20` ([Contact.tsx:35](src/components/sections/Contact.tsx#L35)) is an 80px hole on mobile.
+- [ ] **Touch targets.** Nav/hero/palette buttons sized with `py-[0.35rem]`–`py-[0.42rem]` land well under 44px.
+- [ ] **Reduced motion is not respected** anywhere: framer-motion entrances ([ScrollReveal](src/components/ui/ScrollReveal.tsx)), the tilt/magnetic/particle effects, and the CSS ticker + marquee keyframes in [globals.css](src/app/globals.css).
+- [ ] **`overflow-x: hidden` on `body`** ([globals.css:16](src/app/globals.css#L16)) is masking rather than fixing — check for real horizontal overflow at 360px with it disabled.
+- [ ] Also pass over [Footer.tsx](src/components/layout/Footer.tsx), [Timeline.tsx](src/components/sections/Timeline.tsx) (the `200px_1fr` sidebar), [blog/page.tsx](src/app/blog/page.tsx) and [blog/[slug]/page.tsx](src/app/blog/[slug]/page.tsx), and verify focus-visible rings exist now that hover is desktop-only.
+
+---
+
+## Admin panel (tasks 7–11): shared context
+
+Skills ([src/data/skills.ts](src/data/skills.ts)) and the career timeline ([src/data/timeline.ts](src/data/timeline.ts)) are hard-coded, so every change needs a code edit and a deploy. "11+ years" is typed by hand in 7 places: Hero ×2, [Stats.tsx:5](src/components/sections/Stats.tsx#L5), [Ticker.tsx:2](src/components/sections/Ticker.tsx#L2), ForYou ×2, the Timeline heading, and the [layout.tsx](src/app/layout.tsx) metadata. It is already stale.
+
+Goal: a login-protected admin at a secret URL for adding, editing and deleting skills and experience. The public site reads both from Postgres, and years of experience is calculated from the dates.
+
+**Decisions** (apply to all five tasks):
+- **Auth:** an `AdminUser` table with a bcrypt hash, created by a CLI script. The session is a signed httpOnly JWT cookie (jose).
+- **Hidden URL:** a secret prefix from `ADMIN_PATH`. Middleware rewrites it to the internal `/admin` routes, and `/admin` itself returns 404. If `ADMIN_PATH` is unset, the admin is fully disabled.
+- **Years:** each entry runs from its start month through its end month, and the end month counts in full. A Present entry runs to today. Overlapping or touching ranges are merged, then summed. **Career breaks (gaps with no entry) are not counted.** Shown as `floor(years)` + "+".
+  - A break inside one role is modelled by splitting that entry in two.
+  - Worked example with today's data: May 2013 → Nov 2019 (6y 7m) plus Aug 2020 → today (6y 1.5m) = 12y 8.5m, shown as **12+**. The 8-month break is excluded.
+- **Dates on every entry:** each entry has real dates, plus an optional `periodLabel` that replaces the date text (e.g. "Early Career").
+- **Excluded entries:** `countsTowardExperience` (default true) keeps an entry on the timeline but out of the years sum. **Early Career is excluded** (user decision, 2026-09-14), so its placeholder dates only affect where it sits on the timeline. The site shows **12+**.
+
+---
+
+## 7. Admin data layer: schema, migration, seed, admin script
+
+**Status:** done (2026-09-14)
+
+**7.1 Dependencies & env**
+- [x] `npm i jose bcryptjs` (jose 6.2, bcryptjs 3.0). Both ship their own types, so no `@types/bcryptjs`.
+- [x] Add a `# ─── Admin` block to [.env.example](.env.example):
+  - `AUTH_SECRET`: at least 32 chars, e.g. `openssl rand -base64 32`.
+  - `ADMIN_PATH`: a secret segment. If unset, the admin is disabled. It must be set at build time too, because middleware reads it.
+
+**7.2 Schema + migration**
+- [x] `AdminUser`: `email @unique`, `passwordHash`, timestamps.
+- [x] `Skill`: `name`, `icon?`, `row` (1 or 2), `sortOrder`, timestamps, `@@index([row, sortOrder])`.
+- [x] `Experience`: `role`, `company`, `companyLink?`, `startDate`, `endDate?` (null means Present), `periodLabel?`, `description @db.Text`, `metrics Json @default("[]")`, `projects Json @default("[]")`, timestamps, `@@index([startDate])`. Dates are stored as the 1st of the month (UTC), and the whole end month counts.
+- [x] Migrations applied host-side with `npx prisma migrate dev` against Postgres on 5433, because there's no Docker on this machine. They were first combined into one, then split one per model in 7.6. **Prisma 7's `migrate dev` no longer runs `generate`**, so `npx prisma generate` has to follow it.
+
+**7.3 Seed the existing content**
+- [x] Skills: split `"⚡ PHP"` into icon and name, keeping the row and the order (13 in row 1, 12 in row 2).
+- [x] Timeline: each period string became literal dates via a `month("2022-11")` helper.
+- [x] Early Career gets placeholder dates, Jan 2011 → Apr 2013, with `periodLabel: "Early Career"` and a comment in the seed. **Emdad must correct these in the admin**, because they change the total.
+- [x] Seed each table only when it is empty, so a reseed never overwrites admin edits. Blog posts keep their existing upsert.
+
+**7.4 Admin user script**
+- [x] [scripts/create-admin.ts](scripts/create-admin.ts) + `npm run admin:create -- you@example.com`. It upserts an `AdminUser` with a bcrypt hash (12 rounds), which doubles as a password reset.
+  - The password is prompted twice with input hidden, so it stays out of shell history, or read from `ADMIN_PASSWORD` when scripted.
+  - The email is lower-cased, and passwords must be at least 10 characters.
+  - It builds its own PrismaClient the way [seed.ts](prisma/seed.ts) does.
+
+**7.5 Verify**
+- [x] Seeded directly with `npm run db:seed` rather than `./portfolio fresh`: the new tables were empty, and a reset would have wiped the dev DB's contact submissions. Result: 25 skills and 6 experience entries, dates and metrics as expected. A second run prints "not empty, skipped" for both tables.
+- [x] `admin:create`:
+  - A short password and an invalid email are both rejected.
+  - The first run creates the user and the second resets the password.
+  - The row holds a `$2b$12$` hash that matches the new password and not the old one.
+  - The throwaway user was then deleted, so **no admin exists yet**.
+- [x] `tsc --noEmit` is clean, and the dev server is still 200 after the client regeneration.
+
+**Also fixed while in here:** `npm run db:seed` was broken on the Windows host. It ran `node node_modules/.bin/tsx`, which is a shell shim there, not JS. It is now `tsx --env-file=.env prisma/seed.ts`, the same form as `admin:create`.
+
+**7.6 Restructure: one file per model, migration and seeder**
+
+One file for every table's schema, migration and seed didn't scale, so each concern gets one file per model (the Laravel layout):
+
+| Concern | Location |
+| --- | --- |
+| Table definition | `prisma/schema/<model>.prisma`, with generator + datasource in `schema.prisma`. `prisma.config.ts` points `schema` at the folder |
+| Migration | `prisma/migrations/…_add_<model>/`, one per model |
+| Seeder | `prisma/seeds/<table>.ts`, each exporting `seedX(prisma)`. `prisma/seed.ts` only runs them in order |
+| Model module (queries) | `src/models/<model>.ts`. Pages, actions and the dashboard call these, never `prisma.<model>` directly |
+
+- [x] Removed the combined migration `20260914133804_add_admin_skills_experience`.
+- [x] `git mv` the schema into `prisma/schema/schema.prisma` (the generator `output` becomes `../../src/generated/prisma`). Split out `blog-post.prisma` and `contact-submission.prisma`.
+- [x] Seeders: `seeds/blog-posts.ts`, `seeds/skills.ts`, `seeds/experiences.ts`. A seed error now exits non-zero instead of printing and exiting 0.
+- [x] Model modules:
+  - `src/models/admin-user.ts`: `findAdminByEmail`, `findAdminById`.
+  - `src/models/skill.ts`: list/count/create/update/delete, plus `getSkillMarqueeRows()`.
+  - `src/models/experience.ts`: list/find/count/create/update/delete, typed `metrics`/`projects` JSON, and `ExperienceInput`.
+  - `tsc` is clean. The JSON shapes are `type` aliases, not `interface`s, because Prisma's `InputJsonValue` needs the implicit index signature.
+- [x] `npx prisma migrate reset --force` dropped the local `portfolio_dev` DB back to `init`, with the user's explicit consent. Prisma 7 refuses this command from an AI agent unless `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` carries the user's consent message.
+- [x] Added one model at a time, each followed by `migrate dev`:
+  - `admin-user.prisma` → `20260914135711_add_admin_user`
+  - `skill.prisma` → `20260914135733_add_skill`
+  - `experience.prisma` → `20260914135817_add_experience`
+
+  Then `prisma generate`.
+- [x] Verified:
+  - `migrate status` reports 4 migrations and "up to date", and `migrate diff` against the schema folder exits 0 (no drift).
+  - `npm run db:seed` gives 6 posts, 25 skills and 6 experiences, and a second run skips both content tables.
+  - `tsc` is clean, and the dev server returns 200.
+  - Prisma rewrote `migration_lock.toml` with LF line endings only; that change was reverted.
+
+---
+
+## 8. Admin auth & hidden URL
+
+**Status:** done (2026-09-15) · **Depends on:** 7
+
+**8.1 Session helpers**
+- [x] [src/lib/auth/session.ts](src/lib/auth/session.ts) (Edge-safe, no Prisma import): `signSession(adminId)` and `verifySession(token)` using jose HS256 with a 7-day expiry. `verifySession` pins `algorithms: ["HS256"]` and requires `sub`/`iat`/`exp`.
+  - Cookie `admin_session`: httpOnly, `sameSite: lax`, `secure` in production, `path: /`, `maxAge` 7 days (`sessionCookieOptions`).
+- [x] [src/lib/auth/config.ts](src/lib/auth/config.ts) (Edge-safe, **new, not in the plan**): `getAdminPath()` and `adminHref(path)`. They live here rather than in `admin.ts` because middleware needs them and can't import Prisma. The admin counts as enabled only when `ADMIN_PATH` is a single `[A-Za-z0-9_-]` segment, isn't reserved (`admin`, `api`, `blog`, `_next`), **and** `AUTH_SECRET` is ≥32 chars. Otherwise it logs `[admin] disabled: …` once.
+- [x] [src/lib/auth/admin.ts](src/lib/auth/admin.ts) (`server-only`): `getAdmin()` and `requireAdmin()`, re-exporting `adminHref`.
+  - `requireAdmin()` 404s when the admin is disabled and redirects to login when there's no session. **Every server action calls it, and so does every admin page that loads data**, because layouts and pages render in parallel.
+  - **Beyond the plan:** a session issued before the admin row's `updatedAt` is rejected, so a password reset through `admin:create` logs out every session. `findAdminById` now also selects `updatedAt`.
+
+**8.2 Login / logout**
+- [x] `loginSchema` in [validations.ts](src/lib/validations.ts).
+- [x] [src/app/admin/actions/auth.ts](src/app/admin/actions/auth.ts), the login action:
+  - In-memory limit of 5 **attempts** per IP per 15 min, cleared by a successful login. Attempts are counted before the bcrypt compare rather than after a failure, so parallel requests can't all slip under the limit. The IP comes from `X-Forwarded-For`, so the host has to overwrite that header (Vercel does).
+  - A dummy bcrypt compare (cost 12, same as `admin:create`) when the email is unknown.
+  - One generic error, `Invalid email or password.` The throttle has its own message with the minutes left.
+  - On success, set the cookie and redirect to the dashboard.
+- [x] `logoutAction` clears the cookie and redirects to login.
+- [x] [login/page.tsx](src/app/admin/login/page.tsx) + [LoginForm.tsx](src/app/admin/login/LoginForm.tsx) (`useFormState` / `useFormStatus`): inputs `text-base` below `md2`, `min-h-11` targets, `cursor-none`, focus styles, `role="alert"` error wired through `aria-describedby`, and a `rem` card width so it survives a 200% root font.
+- [x] **Moved from middleware to the login page:** "login with a valid session redirects to the dashboard". Middleware can't see the DB, so a validly signed cookie for a deleted admin would have looped between login and the dashboard. The page uses `getAdmin()` instead.
+- [x] Minimal `(panel)/layout.tsx` (`requireAdmin()`, admin email, Log out) and a placeholder `(panel)/page.tsx` dashboard, needed to verify login and logout. Task 9 builds the real shell and dashboard on these.
+
+**8.3 Middleware**
+- [x] [src/middleware.ts](src/middleware.ts), matcher `/((?!_next/|api/|favicon.ico).*)`:
+  - `/admin*` is rewritten to an unrouted path, so it renders the normal 404 with a 404 status. The path is URI-decoded first, so `/%61dmin` is caught too.
+  - `/${ADMIN_PATH}*` with no valid session redirects to `/${ADMIN_PATH}/login`. **Exception:** server-action POSTs (`Next-Action` header) pass through, because a 307 would replay the action's POST against the login page; `requireAdmin()` inside the action handles them.
+  - Otherwise, rewrite to `/admin*` and set `X-Robots-Tag: noindex, nofollow`.
+- [x] [admin/layout.tsx](src/app/admin/layout.tsx) exports `robots: { index: false, follow: false }` and `notFound()`s when the admin is disabled, a backstop if middleware is ever bypassed. Nothing public links to the path.
+
+**8.4 Docs**
+- [x] [CLAUDE.md](CLAUDE.md) § Environment (admin env, build-time `ADMIN_PATH`, the dev-server env caveat) and § Architecture (rewrite, `requireAdmin()` everywhere, `adminHref`, Edge-safe vs `server-only` modules, throttle caveat).
+
+**8.5 Verify**: host-side `npm run dev` + headless Chrome over DevTools, with a throwaway `task8-test@example.com` admin that was deleted afterwards (**no admin exists yet**). Type-checked with `tsc --noEmit`, since dev was running.
+- [x] `/admin`, `/admin/login` and `/%61dmin/login` return 404, and so does a wrong-case `/Studio-…/login`.
+- [x] A logged-out `/<ADMIN_PATH>` and `/<ADMIN_PATH>/anything` 307 to login.
+- [x] Throttle and generic error (one X-Forwarded-For): attempt 1 (unknown email) and attempts 2–5 (wrong password) all show `Invalid email or password.` at ~420ms each, so the unknown email costs a full bcrypt round too. Attempt 6, **with the correct password**, is throttled. A different IP can still log in.
+- [x] A good login lands on the dashboard. The cookie is httpOnly, Lax, `/`, not secure (dev) and expires in 7.00 days. `/login` with a session redirects to the dashboard, and logout clears the cookie and returns to login.
+- [x] Tampered, expired, wrong-key and deleted-admin cookies all land on the login form, with no redirect loop.
+- [x] A password reset through `admin:create` turns a previously valid cookie from 200 into a 307 to login.
+- [x] A cookie-less server-action POST passes middleware (the response carries `X-Robots-Tag`), and `requireAdmin()` then 307s it to login.
+- [x] `X-Robots-Tag: noindex, nofollow` is on the rewritten responses, and `<meta name="robots" content="noindex, nofollow">` is in the page.
+- [x] With `ADMIN_PATH` unset, everything returns 404. In the running dev server, middleware kept the removed var until restart, but the `AdminLayout` backstop still 404'd the login page. Middleware itself was then called directly under each config: unset, reserved `admin`/`blog`, short secret and a nested segment all fall through or 404, and none rewrites into `/admin`.
+- [x] Login page at 360 / 768 / 1440 px with 0px horizontal overflow, plus 1280 px at a 200% root font. Dashboard header at 360 px.
+
+**Known limit:** sessions are stateless JWTs, so logout clears the cookie in that browser but doesn't revoke the token. A copied cookie stays valid until it expires or the password is reset (verified above).
+
+---
+
+## 9. Admin UI: shell, dashboard, skills manager
+
+**Status:** done (2026-09-15) · **Depends on:** 8
+
+**9.1 Panel shell**
+- [x] [(panel)/layout.tsx](src/app/admin/(panel)/layout.tsx): calls `requireAdmin()` and renders the brand, the nav, the admin's email and Log out.
+  - Hrefs are built server-side with `adminHref` and passed to the [AdminNav](src/app/admin/(panel)/AdminNav.tsx) client component. It compares them to `usePathname()` (the public `/<ADMIN_PATH>/…` URL) to set `aria-current="page"`.
+  - Container rules (`px-5 md2:px-[5%]`, `max-w-[1200px]`). On phones the brand and account share the first line and the nav wraps to a full-width second line. Every target is `min-h-11`.
+  - **Experience is not in the nav yet:** a link now would 404, so task 10 adds it along with its pages.
+- [x] Shared admin UI: [src/components/admin/styles.ts](src/components/admin/styles.ts) holds the field, label, error and button class strings. It is a plain module, so server components get real strings; exporting them from a `"use client"` file would hand servers a client reference. [SubmitButton.tsx](src/components/admin/SubmitButton.tsx) uses `useFormStatus`. The login form now uses both.
+- [x] [src/lib/actionState.ts](src/lib/actionState.ts): the `ActionState<Field>` shape (`errors`, `message`, `savedAt`) returned by admin actions, plus `fieldErrors(zodError)` and `isRecordNotFound` (Prisma P2025). Task 10 reuses them.
+
+**9.2 Dashboard**
+- [x] [(panel)/page.tsx](src/app/admin/(panel)/page.tsx): years of experience (`getTimeline()`, the same number the site shows), skill count with a "Manage skills →" link, and experience count. It is a `dl` that goes 1 → 3 columns at `sm`.
+
+**9.3 Skills manager**
+- [x] `skillSchema` in [validations.ts](src/lib/validations.ts): `name` trimmed and required (≤60), `icon` optional (≤16, blank → null), `row` 1 or 2, `sortOrder` a whole number from 0 to 9999. A blank sort order is an error, not a silent 0.
+- [x] [actions/skills.ts](src/app/admin/actions/skills.ts): `createSkillAction`, `updateSkillAction` and `deleteSkillAction`. Each runs `requireAdmin()`, then Zod, then Prisma, then `revalidatePath("/")` + `revalidatePath("/admin", "layout")`.
+  - Create omits the sort order and appends to the end of the row (`nextSkillSortOrder` in [models/skill.ts](src/models/skill.ts)).
+  - Update on a row deleted elsewhere returns a form message instead of throwing. Delete of an already-deleted row counts as success.
+- [x] [(panel)/skills/page.tsx](src/app/admin/(panel)/skills/page.tsx) + [SkillsManager](src/app/admin/(panel)/skills/SkillsManager.tsx):
+  - An add form (icon, name, row) that clears and refocuses Name after each add.
+  - Skills grouped by row with counts, and `#sortOrder` shown on each.
+  - Inline edit (icon, name, row, sort order): focus moves to Name, Escape or Cancel closes it, and focus returns to the Edit button.
+  - Delete asks inline for confirmation (not `window.confirm`), with focus on Cancel.
+  - Validation errors show under each field, with `aria-invalid` / `aria-describedby`.
+  - Fields wrap with `flex-wrap` + basis, so they stack on phones and sit on one line on desktop.
+
+**9.4 Verify**: headless Chrome over DevTools against `npm run dev`, as a throwaway `task9-test@example.com` admin (deleted afterwards). `tsc --noEmit` is clean.
+- [x] Dashboard shows 12+, 25 and 6, matching the DB. The nav marks the current page, and the dashboard link client-navigates to Skills.
+- [x] Add: a blank name gives the inline "Name is required". A valid add persists `🧪 / row 2 / sortOrder 12` (end of row 2), clears the form, and shows on `/`.
+- [x] Edit: a blank name plus sort order −1 show both errors inline and persist nothing. A valid edit persists the new icon, name, row 1 and sort order 0; the skill moves from row 2 to the top of row 1, and `/` shows the new label, not the old one.
+- [x] Delete: Cancel keeps the skill, and confirming removes it from the DB, the list and `/`.
+- [x] The browser's real delete request (captured `Next-Action` + body) was replayed against another skill. Without a cookie, and with a forged one, it returned 303 → login and the row survived. The same replay **with** the session cookie deleted it (positive control).
+- [x] 360 / 768 / 1440 px: no horizontal overflow on the dashboard or Skills; also Skills at 1280 px with a 200% root font. The first pass wrapped every skill's buttons onto a second line at 360 px; with a smaller name basis the buttons now share the line (page 3225 → 2459 px tall).
+- [ ] `revalidatePath` against a **production** build is still unchecked (dev renders `/` dynamically, so the round trips above can't prove it). Check it with `npm run build && npm start` while dev is stopped.
+
+---
+
+## 10. Admin UI: experience manager
+
+**Status:** done (2026-09-15) · **Depends on:** 8 (the shell comes from 9.1)
+
+**10.1 Validation & actions**
+- [x] `experienceSchema` in [validations.ts](src/lib/validations.ts). It parses the raw form (month strings, `"on"` checkboxes, the metrics/projects rows as JSON strings) and transforms straight into `ExperienceInput`:
+  - `role`, `company` and `description` are trimmed and required. `companyLink` is optional but must be an `http(s)` URL, so `javascript:` is rejected.
+  - Start is a `YYYY-MM` month. End is required unless Present, and must not be before the start (the same month is allowed). Present stores `endDate = null`.
+  - `periodLabel` is optional (blank → null). `countsTowardExperience` is a checkbox, ticked by default in the form.
+  - `metrics[]`: `{ label, type }`; `"default"` is stored as no `type`, matching the seeded rows. `projects[]`: `{ name, icon, tags }`, where tags arrive comma-separated and are split, trimmed and de-blanked. Both are capped at 20 rows.
+  - Errors use dotted paths (`metrics.1.label`, `projects.0.tags.2`). `fieldErrors` in [actionState.ts](src/lib/actionState.ts) now keys every issue by its full path; skills errors are unaffected.
+  - Month helpers `toMonthValue` / `fromMonthValue` added to [src/lib/experience.ts](src/lib/experience.ts).
+- [x] [actions/experience.ts](src/app/admin/actions/experience.ts): `createExperienceAction`, `updateExperienceAction` and `deleteExperienceAction`. Each runs `requireAdmin()`, then Zod, then the model, then revalidates `/` and the admin layout. Create and update redirect to the list; update on a deleted row returns a form message.
+
+**10.2 List page**
+- [x] [(panel)/experience/page.tsx](src/app/admin/(panel)/experience/page.tsx): entries by `startDate desc` with role, company, period badge and a "Not counted in years" badge where it applies. The heading shows the computed total ("add up to 12+ years"). Each row ([ExperienceItem](src/app/admin/(panel)/experience/ExperienceItem.tsx)) has Edit and an inline Delete confirm (focus on Cancel, Escape closes it, focus returns to Delete).
+- [x] Experience added to the panel nav, and a "Manage experience →" link on the dashboard.
+
+**10.3 Create / edit form**
+- [x] `new/page.tsx` and `[id]/page.tsx` share [ExperienceForm](src/app/admin/(panel)/experience/ExperienceForm.tsx):
+  - Fieldsets for Role, Period, Description, Metrics and Projects.
+  - `type="month"` inputs with a `pattern`/placeholder fallback for browsers without a month picker, and a Present checkbox that disables the end input.
+  - Period label and "Count toward years of experience" checkboxes, with hints explaining what each does.
+  - Repeatable metric rows (label + style) and project cards (name, icon, comma-separated tags). Adding a row focuses its first input; removing one focuses the add button.
+  - Row errors are hidden once rows are added or removed, because their indices go stale.
+  - After a failed save, focus goes to the first invalid field and a summary line reports the count.
+  - One column on phones, two at `md`/`sm`.
+- [x] An unknown `[id]` returns `notFound()` (404).
+- [x] Shared [Field / fieldProps / Checkbox](src/components/admin/Field.tsx) (label, hint and error wired through `aria-describedby`, 44px checkbox targets). `SkillsManager` now uses them too.
+
+**10.4 Verify**: headless Chrome over DevTools against `npm run dev`, as a throwaway `task10-test@example.com` admin (deleted afterwards). `tsc --noEmit` is clean. The schema was also run directly through 12 edge cases.
+- [x] List: 6 entries, "12+ years", and only Early Career carries "Not counted in years". Nav and dashboard link to it.
+- [x] An empty submit shows inline errors on role, company, start, end and description, focuses Role, and shows the summary.
+- [x] End before start gives the inline "The end can't be before the start", focuses End, and creates nothing.
+- [x] A blank metric label shows its row error. Removing that row clears it.
+- [x] Create persists every field: link, `2024-01`→`2024-06`, the green metric, and the project with tags `Alpha, Beta ,, Gamma` → `["Alpha","Beta","Gamma"]`. It redirects to the list, and `/` shows the role, period, metric and tags.
+- [x] The edit form is prefilled (months, link, metric and style, joined tags, checkbox). Ticking Present persists `endDate = null`, and the list shows "Jan 2024 — Present".
+- [x] Moving the entry to 2000-01 → 2005-12 (non-overlapping) lifts the admin and site figures to **18+**. Unticking "Count toward years" drops both back to **12+** and adds the badge.
+- [x] Unknown id → 404. Delete: Escape cancels; confirming removes the entry from the DB, the list and `/`.
+- [x] The browser's captured delete request replayed against another entry: without a cookie it returned 303 → login and the row survived; with the session cookie it was deleted (positive control).
+- [x] 360 / 768 / 1440 px (list and the fully populated Principal entry form), plus 1280 px at a 200% root font: no horizontal overflow and no page errors.
+  - **Fixed along the way:** at 360 px, a long admin email pushed the account block onto its own header line (three lines). The account block is now `flex-1 basis-0`, so the email truncates and the header stays at two lines.
+- [ ] As with task 9, `revalidatePath` against a production build is still unchecked.
+
+---
+
+## 11. Public site reads skills & experience from DB, computed years
+
+**Status:** done (2026-09-14). Two checks are deferred: the extra widths and zoom (see 11.4), and revalidation in production, which moves to tasks 9/10.
+
+**Follow-up (2026-09-14): exclude Early Career from the sum.** The user asked for it, so the figures below that say 15+ are now **12+**.
+- [x] `countsTowardExperience Boolean @default(true)` on `Experience`, in its own migration `20260914174600_experience_counts_toward_experience`.
+- [x] `calculateYearsOfExperience` drops entries with `countsTowardExperience === false` before merging.
+- [x] `ExperienceInput` gains the field. The Early Career seeder sets it to `false`, and the existing local row was updated directly, because the seeder skips a non-empty table.
+- [x] Tests are now 13 of 13, adding: Early Career flagged false gives 12, the flag set to true behaves like unset (6), and only excluded entries gives 0. `tsc` is clean.
+- [x] A fresh Prisma client over the live DB computes **12**.
+- [x] **The dev server kept rendering 15+.**
+  - Cause: [src/lib/prisma.ts](src/lib/prisma.ts) cached the client on `globalThis` across hot reloads. The instance built before `prisma generate` (dev had been up since before the migration) never selected the new column, so `countsTowardExperience` was `undefined` and treated as counted.
+  - Fix: the cache is reused only while `cached instanceof PrismaClient`. A regenerate plus hot reload loads a new class, so the stale client is disconnected and replaced. No restart is needed after schema changes.
+  - Verified without restarting dev: `/` shows **12+** in the hero, bento, ticker, stats, Timeline heading, both ForYou mentions, and the meta/OG descriptions. `/blog` returns 200 and `tsc` is clean.
+  - Documented in CLAUDE.md § Architecture.
+
+**11.1 Pure helpers**: [src/lib/experience.ts](src/lib/experience.ts) (Prisma-free, so client components can import its types)
+- [x] `formatPeriod(e)` returns `periodLabel`, or `"Nov 2022 — Present"` when no label is set. It formats in UTC, because dates are stored as the 1st of the month at 00:00 UTC.
+- [x] `formatYearRange(e)` returns `"2022 — Present"`, a single year when an entry starts and ends in the same year, or the label if set.
+- [x] `calculateYearsOfExperience(entries, now = new Date())`:
+  - Each entry spans its start month through the end of its end month (or `now`). Future spans are dropped.
+  - Spans are sorted and merged where they overlap or touch.
+  - The merged spans are summed and floored to whole years.
+  - **Bug caught by the tests:** the first version divided milliseconds by 365.2425 days, so exactly 5 calendar years (1826 days) floored to 4. It now sums calendar months, with only the final partial month as a fraction.
+- [x] Tested with a tsx script, 10 of 10 passing at `now` = 14 Sep 2026:
+
+  | Case | Result |
+  | --- | --- |
+  | Worked example without Early Career | 12 |
+  | Worked example with the Early Career placeholder | 15 |
+  | Touching months (Jan–Jun + Jun–Nov) | 0: 11 months, not 12 |
+  | Identical overlapping entries (2015–2019 twice) | 5 |
+  | A single Present entry from Sep 2020 | 6 |
+  | 2y + 2y with a 2-year break | 4: counting from the earliest start would give 6 |
+  | Exactly Jan–Dec | 1 |
+  | Jan–Nov | 0 |
+  | No entries | 0 |
+  | Future start | 0 |
+
+  `formatPeriod` and `formatYearRange` outputs were checked too.
+
+**11.2 Queries**: the model modules from 7.6, not a separate `content.ts`
+- [x] `getTimeline()` in [src/models/experience.ts](src/models/experience.ts), wrapped in React `cache()` and shared by the page and `generateMetadata`.
+  - Returns `{ entries: TimelineEntry[], yearsOfExperience }`.
+  - Entries are plain strings (`period`, `yearRange`) plus the metric and project arrays, so no `Date` reaches client props.
+  - The planned separate `years: string[]` list became a `yearRange` field on each entry instead.
+- [x] `getSkillMarqueeRows()` in [src/models/skill.ts](src/models/skill.ts) is now `cache()`d and returns `{ 1: string[], 2: string[] }` (`"⚡ PHP"`).
+- [x] The metric and project types moved out of the model into `src/lib/experience.ts`.
+
+**11.3 Wire up the sections**
+- [x] [page.tsx](src/app/page.tsx) runs `Promise.all([getRecentPosts(), getSkillMarqueeRows(), getTimeline()])`.
+- [x] `Skills({ row1, row2 })`: `MarqueeRow` is unchanged, and an empty row renders nothing.
+- [x] `Timeline({ entries, yearsOfExperience })`:
+  - The heading shows the computed years.
+  - The Jump-to list uses each entry's `yearRange`, keyed by `id`.
+  - Metrics and projects render only when non-empty; empty arrays are what the DB returns now, where the old data used `undefined`.
+- [x] `Hero` (the text and the bento tile), `Stats`, `Ticker` and `ForYou` (both mentions) take `yearsOfExperience`.
+- [x] `generateMetadata()` in page.tsx sets the description and OG description with the computed years. The [layout.tsx](src/app/layout.tsx) description is generic.
+- [x] **`export const revalidate = 86400`** on the home page. It is statically rendered and the years are computed against "now", so without this the figure would freeze at build time.
+- [x] Deleted `src/data/skills.ts` and `src/data/timeline.ts`.
+
+**11.4 Docs & verify**
+- [x] [CLAUDE.md](CLAUDE.md) now covers:
+  - The one-file-per-model/migration/seeder/query layout, and the five models.
+  - Prisma 7's `migrate dev` no longer generating the client.
+  - Skills, experience and blog posts coming from the DB.
+  - The computed-years rules and "never hard-code a years figure".
+  - `admin:create`.
+  - The admin path and auth env are documented in task 8, since they don't exist yet.
+- [x] `tsc --noEmit` is clean, and `src/` has no leftover `11+`, `11 years`, `data/skills`, `data/timeline`, `skillsRow` or `timelineYears`.
+- [x] Rendered `/` from the dev server:
+  - 15+ appears in the hero text, the bento tile, the ticker, stats, the Timeline heading, both ForYou mentions, and the meta and OG descriptions.
+  - All 6 period badges and Jump-to ranges (including "Early Career") are there, and all 25 skills.
+- [x] **DB → page round trip:**
+  - Setting the current role's end to Aug 2025 turned every figure into 14+ and the badge into "Nov 2022 — Aug 2025". A test skill appeared in row 2.
+  - Reverting restored 15+ and "Present".
+  - In production the edit needs `revalidatePath("/")`, which the admin actions add in tasks 9/10.
+- [x] Screenshots via Chrome over DevTools at 1280×900 and 360×800: hero/bento/ticker, Timeline, Skills and ForYou all render the DB content correctly.
+- [ ] Not yet checked at 768 / 960 / 1440 / 2560 or at 1280 with 150% zoom. The change only swaps text and numbers inside existing markup (15 is the same width as 11). Re-check after the task 6 responsive pass lands.
+
+**Noticed, not part of this task:** the hero's rotating FlipWords line renders blank, and there's no nav below 960px. Both are task 6 items, already fixed in the uncommitted responsive pass.
+
+---
+
+## 12. Settings key/value table: headline stats and contact details
+
+**Status:** done (2026-09-15) · **Depends on:** 9 (panel shell, `Field`, `styles.ts`)
+
+**Root cause / context.** The remaining headline numbers and every contact detail are still typed by hand, often more than once, so a change means a code edit, a deploy, and hoping nothing was missed:
+
+| Value | Hard-coded in |
+| --- | --- |
+| `7` concurrent projects | [Stats.tsx:7](src/components/sections/Stats.tsx#L7) "Concurrent Projects", [Hero.tsx:84](src/components/sections/Hero.tsx#L84) bento "Projects at once" |
+| `4+` companies | [Stats.tsx:9](src/components/sections/Stats.tsx#L9) "Companies Led", [Hero.tsx:54](src/components/sections/Hero.tsx#L54) "Worked with 4+ companies" |
+| 🇧🇩 Dhaka, BD | [Hero.tsx:88-89](src/components/sections/Hero.tsx#L88-L89) bento tile; long form "Dhaka, Bangladesh" in [Contact.tsx:130](src/components/sections/Contact.tsx#L130) and [Footer.tsx:7](src/components/layout/Footer.tsx#L7) |
+| `500+` LinkedIn connections | [Hero.tsx:54](src/components/sections/Hero.tsx#L54) |
+| Email | [Contact.tsx:113](src/components/sections/Contact.tsx#L113), ⌘K "Send Email" in [nav.ts:48](src/data/nav.ts#L48), and the **recipient** fallback `TO_FALLBACK` in [mailer.ts:21](src/lib/mailer.ts#L21) (`MAIL_TO` / `RESEND_TO_EMAIL` env first) |
+| Phone | [Contact.tsx:114](src/components/sections/Contact.tsx#L114) (`+880 1833 184053` display, `tel:+8801833184053` href), ⌘K "WhatsApp / Call" in [nav.ts:50](src/data/nav.ts#L50) |
+| LinkedIn URL | [Contact.tsx:115](src/components/sections/Contact.tsx#L115) (href + a hand-shortened display string), ⌘K "Open LinkedIn" in [nav.ts:49](src/data/nav.ts#L49) |
+
+Goal: a key/value settings table that every one of these reads from, the same way years of experience already comes from the DB.
+
+**Decisions.**
+- **A plain key/value table.** `Setting { key, value }`, one row per setting, value always a string. Adding a setting later is a registry entry plus a seed line, with no migration.
+- **Keys are registered in code.** The site can only use keys the code reads, so a Prisma-free registry in `src/lib/settings.ts` lists each key with its label, group, hint and default value. The admin edits exactly the registered keys (no free-form add/delete), and unknown rows in the table are ignored.
+- **Store each value once, derive the variants.** The phone is stored as displayed (`+880 1833 184053`) and the `tel:` href strips everything but a leading `+` and digits. The LinkedIn URL is stored in full, and the display text (`linkedin.com/in/…`) drops the scheme, `www.` and the trailing slash. Counts are stored bare (`4`) and the `+` suffix stays in the markup, so `AnimatedCounter` still gets a number.
+- **One email for display and receiving.** The contact recipient becomes `MAIL_TO` env → `RESEND_TO_EMAIL` env → **the `contact.email` setting** → its registry default (which replaced `TO_FALLBACK`). The `.env.example` placeholders (`your@email.com`, `…@yourdomain.com`) don't count as an override. Env stays on top so dev and staging never mail the real inbox. The settings page says when an env override is active, so an edit that "does nothing" in production is explained (the fix there is to remove `MAIL_TO` from the host env).
+- **Never break the page over a missing row.** `getSettings()` fills any missing key from the registry default, so a fresh clone that skipped the seed still renders.
+
+**Keys and where each value is used:**
+
+| Key | Seed value | Used in |
+| --- | --- | --- |
+| `stats.concurrentProjects` | `7` | Stats "Concurrent Projects", Hero bento "Projects at once" |
+| `stats.companiesLed` | `4` | Stats "Companies Led" (`4+`), Hero "Worked with 4+ companies" |
+| `stats.linkedinConnections` | `500` | Hero "500+ LinkedIn connections" |
+| `location.flag` | `🇧🇩` | Hero bento location tile |
+| `location.short` | `Dhaka, BD` | Hero bento location tile |
+| `location.full` | `Dhaka, Bangladesh` | Contact "📍 … · Available for remote work", Footer |
+| `contact.email` | `emdad.ullah@reddotdigitalit.com` | Contact "Email" row, ⌘K "Send Email", **contact form recipient** |
+| `contact.phone` | `+880 1833 184053` | Contact "Phone / WhatsApp" row, ⌘K "WhatsApp / Call" |
+| `contact.linkedinUrl` | `https://www.linkedin.com/in/emdad-ullah-41956756/` | Contact "LinkedIn" row, ⌘K "Open LinkedIn" |
+
+**12.1 Schema, migration, seed, model**
+- [x] [prisma/schema/setting.prisma](prisma/schema/setting.prisma): `Setting` with `key String @id`, `value String @db.Text`, `createdAt`, `updatedAt`. Migration `20260914200348_add_setting`, then `prisma generate`. Prisma again rewrote `migration_lock.toml` with LF endings; reverted.
+- [x] [src/lib/settings.ts](src/lib/settings.ts) (Prisma-free, zod-free): `SETTING_GROUPS`, the `SETTINGS` registry (label, group, hint, input kind, max length, default), `SettingKey`, `Settings`, `SETTING_KEYS`, `DEFAULT_SETTINGS`, `settingInt()`, `contactDetails()`, `telHref()` and `linkedinDisplay()`.
+- [x] [prisma/seeds/settings.ts](prisma/seeds/settings.ts): `seedSettings(prisma)` with `createMany({ skipDuplicates: true })`, wired into [prisma/seed.ts](prisma/seed.ts).
+- [x] [src/models/setting.ts](src/models/setting.ts): `getSettings()` (React `cache()`, merged over the defaults), `settingsUpdatedAt()` and `saveSettings()` (one upsert per key in a `$transaction`).
+
+**12.2 Admin**
+- [x] `settingsSchema` in [validations.ts](src/lib/validations.ts): one validator per key, as planned. It is typed `satisfies Record<SettingKey, z.ZodType>`, so a key added to the registry without a validator fails `tsc`. The phone also only allows digits, spaces and `+ - ( )`.
+- [x] [actions/settings.ts](src/app/admin/actions/settings.ts): `saveSettingsAction` reads only `SETTING_KEYS` from the form, so a forged extra key is dropped. **Changed from the plan:** it revalidates `/` and the admin layout, not `/` as a layout, because the Footer only renders on the home page (the blog pages have no footer or contact details).
+- [x] [(panel)/settings/page.tsx](src/app/admin/(panel)/settings/page.tsx) + [SettingsForm](src/app/admin/(panel)/settings/SettingsForm.tsx), generated from the registry:
+  - Fieldsets per group, with each key's hint. The count hint notes that the "7 concurrent projects" wording in What I Do and the experience metric is written text and won't change.
+  - Live previews: "Call link: tel:…" and "Shown as: linkedin.com/in/…".
+  - After a failed save, focus goes to the first invalid field and a summary reports the count. After a successful save, a `role="status"` "Saved" line appears.
+  - The inputs are keyed by the settings' latest `updatedAt`, so after a save they remount showing the stored, normalised values (`009` → `9`, email lower-cased).
+  - Under Email: an amber note when `MAIL_TO` / `RESEND_TO_EMAIL` overrides the recipient, naming the address that actually gets mail, or a note when no mail transport is configured. `mailToOverride()` is exported from [mailer.ts](src/lib/mailer.ts) for this.
+- [x] "Settings" in the panel nav, and a fourth dashboard card with the contact email and "Manage settings →". The grid is now 1 → 2 (`sm`) → 4 (`lg`) columns.
+
+**12.3 Use the values on the public site**
+- [x] [page.tsx](src/app/page.tsx) adds `getSettings()` to its `Promise.all` and passes plain values.
+- [x] `Stats` and `Hero`, as planned. The location tile's text got `break-words`.
+- [x] `Contact`: rows built from `contact` via `telHref` / `linkedinDisplay`, and the footnote uses `location.full`. The row's text column is now `min-w-0` with `break-words` on the value, so a long email or LinkedIn path wraps inside the row at 360px instead of pushing past it.
+- [x] `Footer({ location })`.
+- [x] ⌘K: `commandGroups` became `buildCommandGroups(contact)` in [nav.ts](src/data/nav.ts). `HomeClient` passes `contact` to `CommandPalette`, which memoises the groups.
+- [x] [mailer.ts](src/lib/mailer.ts): `mailTo()` is async (override → setting → default), and a settings read error is logged and falls back to the default, so `sendContactEmail()` still never throws. `TO_FALLBACK` is gone.
+- [x] Sweep: `reddotdigitalit.com`, `8801833`, `41956756` and `Dhaka` appear in `src/` only as registry defaults and comments in `settings.ts`, plus the experience `companyLink`.
+
+**Gotcha hit while verifying:** the running `npm run dev` kept serving the pre-`generate` Prisma client, so `/` 500'd with `Cannot read properties of undefined (reading 'findMany')`. The compiled chunk had no `model Setting` in it, and touching the generated files didn't help. `prisma generate` replaces the output folder, and on Windows the dev watcher loses it. A dev restart fixed it. CLAUDE.md's "no restart needed" note is corrected.
+
+**12.4 Docs & verify**
+- [x] CLAUDE.md:
+  - § Environment: the recipient order, and "leave `MAIL_TO` unset in production".
+  - § Architecture: `Setting` in the models list, a **Site settings** section (registry, how to add a key, `getSettings()`, the derive helpers, "never hard-code"), and the corrected dev-restart note.
+  - `.env.example`: the `MAIL_TO` comment says the same.
+- [x] Verified with headless Chrome over DevTools against `npm run dev`, as a throwaway `task12-test@example.com` admin (deleted afterwards). `tsc --noEmit` is clean. 22 of 22 checks passed:
+  - Dashboard card and nav link; Settings is marked current; the form shows every stored value; the `MAIL_TO` note is shown (it's set in `.env`).
+  - **Validation:** a blank count, `not-an-email`, a non-LinkedIn URL, a 3-digit phone and a whitespace-only location each show their inline error. Focus goes to the first one, the summary says "5 fields need attention", and nothing is saved. `javascript:alert(1)` is rejected too.
+  - The live previews update as you type (`tel:+15550101234`, `linkedin.com/in/task12-test`).
+  - **Save:** `009` is stored as `9` and `Task12.Test@Example.com` as lower case, and the flag emoji round-trips. A hidden `evil.key` input is not written, and the inputs remount with the stored values.
+  - **Home page with every key changed:** "Worked with 5+ companies · 750+ LinkedIn connections", the 9 and the location tiles, the Stats props, the three contact hrefs and the LinkedIn text, "📍 Task City, Testland" and the footer, and the ⌘K contact props. No old value remains. At 1280px the ⌘K "Open LinkedIn" item opens the saved URL.
+  - **Replay:** the captured save, replayed without a cookie, returns 303 → login and changes nothing. The same request with the session cookie saves (positive control).
+  - Settings page at 360 / 768 / 1440 px and at 1280 px with a 200% root font: no horizontal overflow (screenshots checked).
+  - At 360px, a 78-character email wraps to 3 lines inside its contact row, and the LinkedIn path wraps too. No page errors.
+- [x] **Mail**, through `POST /api/contact` into Mailpit, with `MAIL_TO` temporarily commented out of `.env` (restored and byte-compared afterwards). The `RESEND_TO_EMAIL="your@email.com"` placeholder stayed set.
+  - With the setting changed to `task12.mail@example.com`, the message went to that address, so the placeholder was ignored.
+  - With `MAIL_TO` back, it went to `inbox@localhost`.
+  - The test submissions were deleted.
+  - Not exercised: the fallback when the settings read itself throws.
+- [x] **Missing rows:** with `location.full` deleted, the footer shows the default while an edited `stats.companiesLed = 8` still renders. With the table empty, `/` is 200 with every default. A reseed from one edited row inserts the other 8 keys and keeps the edit; a second run skips.
+
+---
+
+## Suggested order
+
+Task 1 is independent (backend + env). Tasks 3 and 5 overlap on the blue/contrast question — do them together. Task 4 is self-contained. Task 2 touches the same files as 3, so land 3 first. Task 6 is last, since it will re-touch the nav, hero, and contact form that tasks 2–5 modify.
+
+Admin panel: **7 → 11 → 8 → 9 → 10**.
+- Task 11 comes right after 7, so the public site switches to the DB (with the correct years) before any UI exists.
+- Tasks 9 and 10 both need 8.
+- Task 11 touches the same section components as task 6 (Hero, Stats, Ticker, ForYou, Timeline, Skills), but only their data and props, so either order works.
+
+Task 12 comes after 9 (it reuses the panel shell and form components). It edits Hero, Stats and Contact again, so if task 6 is still open, land 12's prop changes first and let 6 restyle on top.

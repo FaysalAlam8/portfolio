@@ -1,14 +1,18 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { commandGroups } from "@/data/nav";
+import { buildCommandGroups } from "@/data/nav";
+import { requestContactType } from "@/lib/contactType";
+import type { ContactDetails } from "@/lib/settings";
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  contact: ContactDetails;
 }
 
-export function CommandPalette({ isOpen, onClose }: Props) {
+export function CommandPalette({ isOpen, onClose, contact }: Props) {
+  const commandGroups = useMemo(() => buildCommandGroups(contact), [contact]);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
@@ -37,6 +41,7 @@ export function CommandPalette({ isOpen, onClose }: Props) {
     setTimeout(() => {
       const el = document.querySelector(item.href) as HTMLElement;
       if (el) window.scrollTo({ top: el.offsetTop - 70, behavior: "smooth" });
+      if (item.contactType) requestContactType(item.contactType);
     }, 150);
   };
 
@@ -57,6 +62,7 @@ export function CommandPalette({ isOpen, onClose }: Props) {
       {isOpen && (
         <motion.div
           className="fixed inset-0 z-[9000] flex items-start justify-center pt-[18vh]"
+          data-cursor-surface="scrim"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
