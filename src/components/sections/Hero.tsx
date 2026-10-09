@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { ParticleCanvas } from "@/components/ui/ParticleCanvas";
 import { FlipWords } from "@/components/ui/FlipWords";
 import { TiltCard } from "@/components/ui/TiltCard";
@@ -25,21 +26,32 @@ export function Hero({
 
       {/* Left */}
       <div className="relative z-10">
-        <div className="inline-flex items-center gap-[0.45rem] bg-[#F0FDF4] text-green border border-[#BBF7D0] px-[0.85rem] py-[0.3rem] rounded-[3px] text-[0.72rem] font-bold mb-6 tracking-[0.3px]">
-          <span className="relative w-[6px] h-[6px] rounded-full bg-green flex-shrink-0 before:content-[''] before:absolute before:inset-[-3px] before:rounded-full before:bg-green before:opacity-20 before:animate-ping" />
-          Open to opportunities
+        <div className="flex items-start justify-between gap-4 mb-6">
+          <div className="inline-flex items-center gap-[0.45rem] bg-[#F0FDF4] text-green border border-[#BBF7D0] px-[0.85rem] py-[0.3rem] rounded-[3px] text-[0.72rem] font-bold tracking-[0.3px]">
+            <span className="relative w-[6px] h-[6px] rounded-full bg-green flex-shrink-0 before:content-[''] before:absolute before:inset-[-3px] before:rounded-full before:bg-green before:opacity-20 before:animate-ping" />
+            Open to opportunities
+          </div>
+
+          {/* Portrait on phones/tablets; the bento tile shows it from md2 up */}
+          <Image
+            src="/images/emdad-ullah.jpg"
+            alt="Portrait of Emdad Ullah"
+            width={255}
+            height={255}
+            priority
+            sizes="(min-width: 640px) 9rem, 7rem"
+            className="md2:hidden flex-shrink-0 w-28 sm:w-36 aspect-square max-w-full rounded-xl border border-border object-cover shadow-[3px_3px_0_#0A0A0A]"
+          />
         </div>
 
         <p className="text-[0.68rem] font-bold tracking-[3px] uppercase text-muted mb-3">Principal Engineer · Team & Client Leader</p>
 
         <h1 className="text-[clamp(3rem,5.5vw,5rem)] font-black leading-[1.03] tracking-[-3px] text-black mb-6">
           <span className="block">I lead teams.</span>
-          <span className="block" style={{ height: "1.08em", position: "relative", overflow: "hidden" }}>
-            <FlipWords
-              words={["I own outcomes.", "I build systems.", "I ship products.", "I mentor engineers."]}
-              className="font-mono text-accent"
-            />
-          </span>
+          <FlipWords
+            words={["I own outcomes.", "I build systems.", "I ship products.", "I mentor engineers."]}
+            className="font-mono text-accent text-[0.55em] tracking-[-0.03em]"
+          />
         </h1>
 
         <p className="text-base text-text2 leading-[1.82] max-w-[500px] mb-10">
@@ -71,38 +83,55 @@ export function Hero({
 
       {/* Right — bento */}
       <div className="hidden md2:block relative z-10">
-        <div className="grid grid-cols-2 gap-3">
-          <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
-            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">{yearsOfExperience}+</div>
-            <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.8px]">Years Exp.</div>
-          </TiltCard>
-          <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
-            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">1M+</div>
-            <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.8px]">Users Reached</div>
-          </TiltCard>
-          <div className="col-span-2 bg-black border border-black rounded-xl p-5 cursor-none hover:shadow-[4px_4px_0_#444] transition-all">
-            <div className="flex justify-between items-start mb-[0.85rem]">
-              <div>
-                <div className="text-[0.85rem] font-bold text-white">Currently Available</div>
-                <div className="text-[0.7rem] text-white/50 mt-0.5 leading-snug">Full-time · Consulting · Mentoring</div>
+        <div className="grid grid-cols-2 gap-3 items-stretch">
+          {/* Left half — portrait */}
+          <figure className="m-0 flex flex-col overflow-hidden bg-white border border-border rounded-xl cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
+            <div className="relative flex-1 min-h-[16rem] bg-gray">
+              <Image
+                src="/images/emdad-ullah.jpg"
+                alt="Portrait of Emdad Ullah"
+                fill
+                priority
+                sizes="(min-width: 1440px) 300px, 22vw"
+                className="object-cover object-[center_25%]"
+              />
+            </div>
+            <figcaption className="p-5 border-t border-border">
+              <div className="text-[1.15rem] font-black tracking-[-0.02em] leading-tight text-black break-words">Emdad Ullah</div>
+              <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.08em] leading-snug">Principal Engineer</div>
+            </figcaption>
+          </figure>
+
+          {/* Right half — cards */}
+          <div className="flex flex-col gap-3 min-w-0">
+            <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
+              <div className="text-[2.5rem] font-black tracking-[-0.05em] leading-none font-mono">{yearsOfExperience}+</div>
+              <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.08em]">Years Exp.</div>
+            </TiltCard>
+            <div className="bg-black border border-black rounded-xl p-5 cursor-none hover:shadow-[4px_4px_0_#444] transition-all">
+              <div className="flex flex-wrap justify-between items-start gap-2 mb-[0.85rem]">
+                <div className="min-w-0">
+                  <div className="text-[0.85rem] font-bold text-white">Currently Available</div>
+                  <div className="text-[0.7rem] text-white/50 mt-0.5 leading-snug">Full-time · Consulting · Mentoring</div>
+                </div>
+                <span className="text-[0.65rem] font-bold px-[0.6rem] py-[0.18rem] rounded-[3px] bg-green/20 text-[#4ADE80]">✓ Open</span>
               </div>
-              <span className="text-[0.65rem] font-bold px-[0.6rem] py-[0.18rem] rounded-[3px] bg-green/20 text-[#4ADE80]">✓ Open</span>
+              <div className="flex flex-wrap gap-[0.35rem]">
+                {["💼 Full-time","🎓 Mentor","🤝 Consulting"].map(c => (
+                  <span key={c} className="text-[0.62rem] font-semibold px-[0.52rem] py-[0.17rem] rounded-[3px] bg-white/10 text-white/70 border border-white/10">{c}</span>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-[0.35rem]">
-              {["💼 Full-time","🎓 Mentor","🤝 Consulting"].map(c => (
-                <span key={c} className="text-[0.62rem] font-semibold px-[0.52rem] py-[0.17rem] rounded-[3px] bg-white/10 text-white/70 border border-white/10">{c}</span>
-              ))}
-            </div>
+            <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
+              <div className="text-[2.5rem] font-black tracking-[-0.05em] leading-none font-mono">{concurrentProjects}</div>
+              <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.08em]">Projects at once</div>
+            </TiltCard>
+            <TiltCard className="bg-[#FFFBEB] border border-[#FDE68A] rounded-xl p-5 cursor-none hover:shadow-[4px_4px_0_#D97706] transition-all">
+              <div className="text-[1.4rem] mb-1">{locationFlag}</div>
+              <div className="text-[0.78rem] font-bold break-words">{locationShort}</div>
+              <div className="text-[0.67rem] font-semibold text-muted uppercase tracking-[0.08em] mt-0.5">Remote-ready</div>
+            </TiltCard>
           </div>
-          <TiltCard className="bg-white border border-border rounded-xl p-5 cursor-none hover:border-black hover:shadow-[4px_4px_0_#0A0A0A] transition-all">
-            <div className="text-[2.5rem] font-black tracking-[-2px] leading-none font-mono">{concurrentProjects}</div>
-            <div className="text-[0.67rem] font-semibold text-muted mt-1 uppercase tracking-[0.8px]">Projects at once</div>
-          </TiltCard>
-          <TiltCard className="bg-[#FFFBEB] border border-[#FDE68A] rounded-xl p-5 cursor-none hover:shadow-[4px_4px_0_#D97706] transition-all">
-            <div className="text-[1.4rem] mb-1">{locationFlag}</div>
-            <div className="text-[0.78rem] font-bold break-words">{locationShort}</div>
-            <div className="text-[0.67rem] font-semibold text-muted uppercase tracking-[0.8px] mt-0.5">Remote-ready</div>
-          </TiltCard>
         </div>
       </div>
     </section>
