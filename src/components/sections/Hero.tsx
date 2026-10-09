@@ -34,12 +34,10 @@ export function Hero({
 
         <h1 className="text-[clamp(3rem,5.5vw,5rem)] font-black leading-[1.03] tracking-[-3px] text-black mb-6">
           <span className="block">I lead teams.</span>
-          <span className="block" style={{ height: "1.08em", position: "relative", overflow: "hidden" }}>
-            <FlipWords
-              words={["I own outcomes.", "I build systems.", "I ship products.", "I mentor engineers."]}
-              className="font-mono text-accent"
-            />
-          </span>
+          <FlipWords
+            words={["I own outcomes.", "I build systems.", "I ship products.", "I mentor engineers."]}
+            className="font-mono text-accent text-[0.55em] tracking-[-0.03em]"
+          />
         </h1>
 
         <p className="text-base text-text2 leading-[1.82] max-w-[500px] mb-10">

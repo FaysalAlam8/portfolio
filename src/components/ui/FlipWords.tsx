@@ -17,7 +17,7 @@ export function FlipWords({ words, interval = 2500, className }: Props) {
   }, [words.length, interval]);
 
   return (
-    <span className={`relative inline-block overflow-hidden ${className ?? ""}`} style={{ height: "1.08em" }}>
+    <span className={`relative block overflow-hidden whitespace-nowrap ${className ?? ""}`} style={{ height: "1.2em" }}>
       <AnimatePresence mode="wait">
         <motion.span
           key={index}
